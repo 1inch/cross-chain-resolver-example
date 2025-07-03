@@ -28,7 +28,7 @@ export const config = {
             tokens: {
                 USDC: {
                     address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-                    donor: '0x4B16c5dE96EB2117bBE5fd171E4d203624B014aa'
+                    donor: '0xd54F23BE482D9A58676590fCa79c8E43087f92fB'
                 }
             }
         },
