@@ -11,7 +11,7 @@
     "@eslint/compat": "1.1.0",
     "@eslint/eslintrc": "^3.1.0",
     "@eslint/js": "^9.10.0",
-    "@1inch/tsconfig": "1.0.7",
+    "@1inch/tsconfig": "1.0.9",
     "@jest/globals": "29.7.0",
     "@swc/core": "1.5.25",
     "@swc/jest": "0.2.36",
@@ -41,8 +41,8 @@
     "node": "22.5.1"
   },
   "dependencies": {
-    "@1inch/byte-utils": "2.6.0",
-    "@1inch/cross-chain-sdk": "v0.1.15-rc.0",
+    "@1inch/byte-utils": "3.1.0",
+    "@1inch/cross-chain-sdk": "v0.2.1-rc.50",
     "dotenv": "16.4.5",
     "ethers": "6.13.2",
     "prool": "0.0.24"
