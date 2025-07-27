@@ -132,3 +132,6 @@ dist
 
 cache
 .idea
+
+# macOS
+.DS_Store
