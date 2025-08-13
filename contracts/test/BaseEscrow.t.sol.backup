@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.23;
+
+import "forge-std/Test.sol";
+import "../lib/cross-chain-swap/contracts/BaseEscrow.sol";
+
+// Mock contract that inherits from BaseEscrow
+contract MockEscrow is BaseEscrow {
+    using AddressLib for Address;
+    
+    constructor(uint32 rescueDelay, IERC20 accessToken) 
+        BaseEscrow(rescueDelay, accessToken) {}
+    
+    // Implement required abstract functions
+    function isSrc() public pure override returns (bool) {
+        return false;
+    }
+    
+    function validate(Immutables calldata) external pure override returns (bool) {
+        return true;
+    }
+}
+
+contract BaseEscrowTest is Test {
+    MockEscrow public mockEscrow;
+    
+    function setUp() public {
+        // Deploy mock escrow with test parameters
+        mockEscrow = new MockEscrow(7 days, IERC20(address(0)));
+    }
+    
+    function test_Deployment() public {
+        assertTrue(address(mockEscrow) != address(0));
+        assertFalse(mockEscrow.isSrc());
+    }
+    
+    function test_BasicFunctionality() public {
+        // Test basic functionality
+        assertFalse(mockEscrow.isSrc());
+        
+        // Test validation function
+        IBaseEscrow.Immutables memory immutables = IBaseEscrow.Immutables({
+            orderHash: keccak256("test"),
+            hashlock: keccak256("secret"),
+            maker: address(0x1),
+            taker: address(0x2),
+            token: address(0x3),
+            amount: 1000,
+            safetyDeposit: 100,
+            timelocks: 0
+        });
+        
+        assertTrue(mockEscrow.validate(immutables));
+    }
+}

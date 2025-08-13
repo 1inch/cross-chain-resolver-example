@@ -1,0 +1,375 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.23;
+
+import "forge-std/Test.sol";
+import "../src/NearBridge.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+contract MockERC20 is ERC20 {
+    bool public transferShouldFail = false;
+    bool public transferFromShouldFail = false;
+    
+    constructor(string memory name, string memory symbol) ERC20(name, symbol) {
+        _mint(msg.sender, 1000000 * 10**18);
+    }
+    
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+    
+    function setTransferShouldFail(bool _fail) external {
+        transferShouldFail = _fail;
+    }
+    
+    function setTransferFromShouldFail(bool _fail) external {
+        transferFromShouldFail = _fail;
+    }
+    
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        if (transferShouldFail) return false;
+        return super.transfer(to, amount);
+    }
+    
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        if (transferFromShouldFail) return false;
+        return super.transferFrom(from, to, amount);
+    }
+}
+
+contract NearBridgeComprehensiveTest is Test {
+    NearBridge public bridge;
+    MockERC20 public testToken;
+    
+    address public owner;
+    address public user1;
+    address public user2;
+    address public relayer1;
+    address public relayer2;
+    address public feeRecipient;
+    
+    uint256 public constant DEPOSIT_FEE = 0.001 ether;
+    uint256 public constant WITHDRAWAL_FEE = 0.002 ether;
+    uint256 public constant MIN_RELAYERS = 2;
+    uint256 public constant DISPUTE_PERIOD = 1 hours;
+    
+    bytes32 public constant WITHDRAWAL_TYPEHASH = keccak256("Withdrawal(bytes32 depositId,address recipient,uint256 amount,uint256 nonce)");
+    
+    event Deposit(
+        bytes32 indexed depositId,
+        address indexed depositor,
+        address token,
+        uint256 amount,
+        uint256 amountAfterFee,
+        string nearRecipient,
+        bytes32 secretHash
+    );
+    
+    event WithdrawalCompleted(
+        bytes32 indexed depositId,
+        address indexed recipient,
+        uint256 amount,
+        bytes32 secret
+    );
+
+    function setUp() public {
+        owner = address(this);
+        user1 = address(0x1);
+        user2 = address(0x2);
+        relayer1 = address(0x11);
+        relayer2 = address(0x12);
+        feeRecipient = address(0x99);
+        
+        testToken = new MockERC20("Test Token", "TEST");
+        
+        bridge = new NearBridge(
+            owner,
+            feeRecipient,
+            DEPOSIT_FEE,
+            WITHDRAWAL_FEE,
+            MIN_RELAYERS,
+            DISPUTE_PERIOD
+        );
+        
+        bridge.addRelayer(relayer1);
+        bridge.addRelayer(relayer2);
+        
+        vm.deal(user1, 10 ether);
+        vm.deal(user2, 10 ether);
+        testToken.mint(user1, 1000000 * 10**18);
+        testToken.mint(user2, 1000000 * 10**18);
+        
+        vm.prank(user1);
+        testToken.approve(address(bridge), type(uint256).max);
+        vm.prank(user2);
+        testToken.approve(address(bridge), type(uint256).max);
+    }
+    
+    // ==================== Core Functionality Tests ====================
+    
+    function test_Deployment() public {
+        assertEq(bridge.owner(), owner);
+        assertEq(bridge.feeRecipient(), feeRecipient);
+        assertEq(bridge.depositFee(), DEPOSIT_FEE);
+        assertEq(bridge.withdrawalFee(), WITHDRAWAL_FEE);
+        assertEq(bridge.minRelayers(), MIN_RELAYERS);
+        assertEq(bridge.disputePeriod(), DISPUTE_PERIOD);
+        assertFalse(bridge.paused());
+        assertTrue(bridge.isRelayer(relayer1));
+        assertTrue(bridge.isRelayer(relayer2));
+        assertEq(bridge.relayerCount(), 2);
+    }
+    
+    function test_ETHDeposit_Success() public {
+        string memory nearRecipient = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 amount = 1 ether;
+        uint256 expectedAmountAfterFee = amount - DEPOSIT_FEE;
+        
+        bytes32 expectedDepositId = keccak256(abi.encodePacked(
+            block.chainid,
+            user1,
+            address(0),
+            amount,
+            nearRecipient,
+            secretHash,
+            block.timestamp
+        ));
+        
+        vm.expectEmit(true, true, false, true);
+        emit Deposit(expectedDepositId, user1, address(0), amount, expectedAmountAfterFee, nearRecipient, secretHash);
+        
+        vm.prank(user1);
+        bytes32 depositId = bridge.deposit{value: amount}(address(0), amount, nearRecipient, secretHash);
+        
+        assertEq(depositId, expectedDepositId);
+        assertEq(address(bridge).balance, expectedAmountAfterFee);
+    }
+    
+    function test_ERC20Deposit_Success() public {
+        string memory nearRecipient = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 amount = 1000 * 10**18;
+        
+        uint256 userBalanceBefore = testToken.balanceOf(user1);
+        uint256 bridgeBalanceBefore = testToken.balanceOf(address(bridge));
+        
+        vm.prank(user1);
+        bytes32 depositId = bridge.deposit{value: DEPOSIT_FEE}(address(testToken), amount, nearRecipient, secretHash);
+        
+        assertEq(testToken.balanceOf(user1), userBalanceBefore - amount);
+        assertEq(testToken.balanceOf(address(bridge)), bridgeBalanceBefore + amount);
+        
+        (,, uint256 storedAmount,,,, bool completed) = bridge.deposits(depositId);
+        assertEq(storedAmount, amount);
+        assertFalse(completed);
+    }
+    
+    function test_CompleteWithdrawal_Success() public {
+        // Create deposit
+        string memory nearRecipient = "alice.near";
+        bytes32 secret = keccak256("secret");
+        bytes32 secretHash = keccak256(abi.encodePacked(secret));
+        uint256 amount = 1 ether;
+        
+        vm.prank(user1);
+        bytes32 depositId = bridge.deposit{value: amount}(address(0), amount, nearRecipient, secretHash);
+        
+        // Complete withdrawal with valid signatures
+        _completeWithdrawalWithValidSignatures(depositId, user2, secret, amount - DEPOSIT_FEE);
+        
+        (,,,,,,bool completed) = bridge.deposits(depositId);
+        assertTrue(completed);
+    }
+    
+    // ==================== Access Control Tests ====================
+    
+    function test_OnlyOwnerFunctions() public {
+        vm.startPrank(user1);
+        
+        vm.expectRevert();
+        bridge.addRelayer(address(0x123));
+        
+        vm.expectRevert();
+        bridge.removeRelayer(relayer1);
+        
+        vm.expectRevert();
+        bridge.updateFees(0.002 ether, 0.003 ether);
+        
+        vm.expectRevert();
+        bridge.updateFeeRecipient(address(0x123));
+        
+        vm.expectRevert();
+        bridge.pause();
+        
+        vm.expectRevert();
+        bridge.collectFees();
+        
+        vm.stopPrank();
+    }
+    
+    // ==================== Relayer Management Tests ====================
+    
+    function test_AddRelayer() public {
+        address newRelayer = address(0x14);
+        
+        bridge.addRelayer(newRelayer);
+        assertTrue(bridge.isRelayer(newRelayer));
+        assertEq(bridge.relayerCount(), 3);
+    }
+    
+    function test_RemoveRelayer() public {
+        bridge.removeRelayer(relayer1);
+        assertFalse(bridge.isRelayer(relayer1));
+        assertEq(bridge.relayerCount(), 1);
+    }
+    
+    function test_RemoveRelayer_BelowMinimum() public {
+        bridge.removeRelayer(relayer1);
+        
+        vm.expectRevert("Cannot go below minimum relayers");
+        bridge.removeRelayer(relayer2);
+    }
+    
+    // ==================== Error Condition Tests ====================
+    
+    function test_DepositETH_InsufficientAmount() public {
+        string memory nearRecipient = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 amount = DEPOSIT_FEE - 1;
+        
+        vm.prank(user1);
+        vm.expectRevert("Insufficient amount after fees");
+        bridge.deposit{value: amount}(address(0), amount, nearRecipient, secretHash);
+    }
+    
+    function test_DepositERC20_InsufficientETHForFee() public {
+        string memory nearRecipient = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 amount = 1000 * 10**18;
+        
+        vm.prank(user1);
+        vm.expectRevert("Insufficient ETH for deposit fee");
+        bridge.deposit{value: DEPOSIT_FEE - 1}(address(testToken), amount, nearRecipient, secretHash);
+    }
+    
+    function test_CompleteWithdrawal_InvalidSecret() public {
+        string memory nearRecipient = "alice.near";
+        bytes32 correctSecret = keccak256("correct_secret");
+        bytes32 secretHash = keccak256(abi.encodePacked(correctSecret));
+        uint256 amount = 1 ether;
+        
+        vm.prank(user1);
+        bytes32 depositId = bridge.deposit{value: amount}(address(0), amount, nearRecipient, secretHash);
+        
+        bytes32 wrongSecret = keccak256("wrong_secret");
+        bytes[] memory signatures = new bytes[](2);
+        
+        vm.expectRevert("Invalid secret");
+        bridge.completeWithdrawal(depositId, user2, wrongSecret, signatures);
+    }
+    
+    function test_CompleteWithdrawal_AlreadyCompleted() public {
+        string memory nearRecipient = "alice.near";
+        bytes32 secret = keccak256("secret");
+        bytes32 secretHash = keccak256(abi.encodePacked(secret));
+        uint256 amount = 1 ether;
+        
+        vm.prank(user1);
+        bytes32 depositId = bridge.deposit{value: amount}(address(0), amount, nearRecipient, secretHash);
+        
+        _completeWithdrawalWithValidSignatures(depositId, user2, secret, amount - DEPOSIT_FEE);
+        
+        bytes[] memory signatures = new bytes[](2);
+        vm.expectRevert("Deposit already completed");
+        bridge.completeWithdrawal(depositId, user2, secret, signatures);
+    }
+    
+    // ==================== Emergency Functions Tests ====================
+    
+    function test_EmergencyWithdraw() public {
+        string memory nearRecipient = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 amount = 1 ether;
+        
+        vm.prank(user1);
+        bytes32 depositId = bridge.deposit{value: amount}(address(0), amount, nearRecipient, secretHash);
+        
+        uint256 userBalanceBefore = user1.balance;
+        bridge.emergencyWithdraw(depositId, user1);
+        
+        (,,,,,,bool completed) = bridge.deposits(depositId);
+        assertTrue(completed);
+        assertEq(user1.balance, userBalanceBefore + (amount - DEPOSIT_FEE));
+    }
+    
+    function test_PauseUnpause() public {
+        bridge.pause();
+        assertTrue(bridge.paused());
+        
+        string memory nearRecipient = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 amount = 1 ether;
+        
+        vm.prank(user1);
+        vm.expectRevert("Pausable: paused");
+        bridge.deposit{value: amount}(address(0), amount, nearRecipient, secretHash);
+        
+        bridge.unpause();
+        assertFalse(bridge.paused());
+        
+        vm.prank(user1);
+        bridge.deposit{value: amount}(address(0), amount, nearRecipient, secretHash);
+    }
+    
+    // ==================== Integration Tests ====================
+    
+    function test_Integration_FullFlow() public {
+        string memory nearRecipient = "alice.near";
+        bytes32 secret = keccak256("secret");
+        bytes32 secretHash = keccak256(abi.encodePacked(secret));
+        uint256 amount = 1 ether;
+        
+        // 1. Deposit
+        vm.prank(user1);
+        bytes32 depositId = bridge.deposit{value: amount}(address(0), amount, nearRecipient, secretHash);
+        
+        // 2. Verify deposit
+        (address depositor,,,,,, bool completed) = bridge.deposits(depositId);
+        assertEq(depositor, user1);
+        assertFalse(completed);
+        
+        // 3. Complete withdrawal
+        _completeWithdrawalWithValidSignatures(depositId, user2, secret, amount - DEPOSIT_FEE);
+        
+        // 4. Verify completion
+        (,,,,,,bool finalCompleted) = bridge.deposits(depositId);
+        assertTrue(finalCompleted);
+    }
+    
+    // ==================== Helper Functions ====================
+    
+    function _completeWithdrawalWithValidSignatures(
+        bytes32 depositId,
+        address recipient,
+        bytes32 secret,
+        uint256 amount
+    ) internal {
+        uint256 nonce = bridge.nonces(recipient);
+        bytes32 structHash = keccak256(abi.encode(WITHDRAWAL_TYPEHASH, depositId, recipient, amount, nonce));
+        bytes32 digest = bridge.hashTypedDataV4(structHash);
+        
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(1, digest);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(2, digest);
+        
+        if (bridge.isRelayer(relayer1)) bridge.removeRelayer(relayer1);
+        if (bridge.isRelayer(relayer2)) bridge.removeRelayer(relayer2);
+        if (!bridge.isRelayer(vm.addr(1))) bridge.addRelayer(vm.addr(1));
+        if (!bridge.isRelayer(vm.addr(2))) bridge.addRelayer(vm.addr(2));
+        
+        bytes[] memory signatures = new bytes[](2);
+        signatures[0] = abi.encodePacked(r1, s1, v1);
+        signatures[1] = abi.encodePacked(r2, s2, v2);
+        
+        bridge.completeWithdrawal(depositId, recipient, secret, signatures);
+    }
+}

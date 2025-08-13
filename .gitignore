@@ -132,3 +132,14 @@ dist
 
 cache
 .idea
+
+API_GUIDE.md
+ARCHITECTURE.md
+DEMO_GUIDE.md
+
+
+package-lock.json
+lib/contracts/lib
+near-solver/test-standalone/target
+
+

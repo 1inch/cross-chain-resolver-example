@@ -1,0 +1,43 @@
+{
+  "name": "deploy-scripts",
+  "version": "1.0.0",
+  "description": "TypeScript deployment scripts for cross-chain resolver",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "deploy:near-bridge": "ts-node src/deploy-near-bridge.ts",
+    "deploy:escrow": "ts-node src/deploy-escrow.ts",
+    "monitor:enhanced": "ts-node src/enhanced-monitor-relayer.ts",
+    "test:eth-to-near:enhanced": "ts-node src/enhanced-eth-to-near-transfer.ts",
+    "test:near-to-eth:enhanced": "ts-node src/enhanced-test-near-to-eth-transfer.ts",
+    "test:near-to-eth:modern": "ts-node src/modern-near-to-eth-transfer.ts",
+    "test:all": "tsx tests/run-all-tests.ts",
+    "test:monitor": "tsx tests/run-all-tests.ts monitor",
+    "test:near-to-eth": "tsx tests/run-all-tests.ts near-to-eth",
+    "test:eth-to-near": "tsx tests/run-all-tests.ts eth-to-near",
+    "test:monitor-unit": "node --test tests/enhanced-monitor-relayer.test.ts",
+    "test:near-to-eth-unit": "node --test tests/enhanced-test-near-to-eth-transfer.test.ts",
+    "test:eth-to-near-unit": "node --test tests/enhanced-eth-to-near-transfer.test.ts"
+  },
+  "dependencies": {
+    "@near-js/accounts": "^1.4.1",
+    "@near-js/client": "^2.2.4",
+    "@near-js/crypto": "^2.2.4",
+    "@near-js/keystores": "^2.2.4",
+    "@near-js/providers": "^0.2.3",
+    "@near-js/signers": "^0.1.5",
+    "@near-js/types": "^2.2.4",
+    "@near-js/utils": "^2.2.4",
+    "dotenv": "^17.2.1",
+    "ethers": "^6.15.0",
+    "near-api-js": "^6.2.4",
+    "tsx": "^4.20.3",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.9",
+    "@types/node-fetch": "^2.6.13",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,0 +1,557 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.23;
+
+import "forge-std/Test.sol";
+import "../src/Resolver.sol";
+import "../lib/cross-chain-swap/contracts/interfaces/IEscrowFactory.sol";
+import "../lib/cross-chain-swap/contracts/interfaces/IBaseEscrow.sol";
+import "../lib/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
+import "../lib/limit-order-protocol/contracts/libraries/TakerTraitsLib.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+// Mock contracts for testing
+contract MockEscrowFactory is IEscrowFactory {
+    mapping(bytes32 => address) public escrowAddresses;
+    
+    function createDstEscrow(
+        IBaseEscrow.Immutables calldata immutables,
+        uint256 srcCancellationTimestamp
+    ) external payable override {
+        // Mock implementation - just store the immutables hash
+        bytes32 hash = keccak256(abi.encode(immutables));
+        escrowAddresses[hash] = address(uint160(uint256(hash)));
+    }
+    
+    function addressOfEscrowSrc(IBaseEscrow.Immutables calldata immutables) external pure override returns (address) {
+        bytes32 hash = keccak256(abi.encode(immutables));
+        return address(uint160(uint256(hash)));
+    }
+    
+    function addressOfEscrowDst(IBaseEscrow.Immutables calldata immutables) external pure override returns (address) {
+        bytes32 hash = keccak256(abi.encode(immutables));
+        return address(uint160(uint256(hash)));
+    }
+}
+
+contract MockOrderMixin is IOrderMixin {
+    struct StoredOrder {
+        Order order;
+        bytes32 r;
+        bytes32 vs;
+        uint256 amount;
+        TakerTraits takerTraits;
+        bytes args;
+    }
+    
+    mapping(bytes32 => StoredOrder) public orders;
+    mapping(bytes32 => uint256) public filledAmounts;
+    
+    function fillOrderArgs(
+        Order calldata order,
+        bytes32 r,
+        bytes32 vs,
+        uint256 amount,
+        TakerTraits takerTraits,
+        bytes calldata args
+    ) external override returns (uint256, uint256, bytes32) {
+        bytes32 orderHash = hashOrder(order);
+        
+        orders[orderHash] = StoredOrder({
+            order: order,
+            r: r,
+            vs: vs,
+            amount: amount,
+            takerTraits: takerTraits,
+            args: args
+        });
+        
+        filledAmounts[orderHash] += amount;
+        return (amount, amount, orderHash);
+    }
+    
+    function hashOrder(Order calldata order) public pure override returns (bytes32) {
+        return keccak256(abi.encode(order));
+    }
+    
+    function remaining(bytes32 orderHash) external view override returns (uint256) {
+        return filledAmounts[orderHash];
+    }
+    
+    function remainingRaw(bytes32 orderHash) external view override returns (uint256) {
+        return filledAmounts[orderHash];
+    }
+    
+    function remainingsRaw(bytes32[] calldata orderHashes) external view override returns (uint256[] memory) {
+        uint256[] memory remainings = new uint256[](orderHashes.length);
+        for (uint256 i = 0; i < orderHashes.length; i++) {
+            remainings[i] = filledAmounts[orderHashes[i]];
+        }
+        return remainings;
+    }
+    
+    function checkPredicate(Order calldata) external pure override returns (bool) {
+        return true;
+    }
+    
+    function cancelOrder(Order calldata) external pure override {
+        // Mock implementation
+    }
+    
+    function fillOrder(
+        Order calldata,
+        bytes calldata,
+        bytes calldata,
+        uint256,
+        uint256,
+        uint256
+    ) external pure override returns (uint256, uint256, bytes32) {
+        return (0, 0, bytes32(0));
+    }
+}
+
+contract MockEscrow {
+    bool public withdrawn = false;
+    bool public cancelled = false;
+    
+    function withdraw(bytes32, IBaseEscrow.Immutables calldata) external {
+        withdrawn = true;
+    }
+    
+    function cancel(IBaseEscrow.Immutables calldata) external {
+        cancelled = true;
+    }
+}
+
+contract MockERC20 is ERC20 {
+    constructor(string memory name, string memory symbol) ERC20(name, symbol) {
+        _mint(msg.sender, 1000000 * 10**18);
+    }
+    
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
+contract ResolverTest is Test {
+    Resolver public resolver;
+    MockEscrowFactory public mockFactory;
+    MockOrderMixin public mockLOP;
+    MockERC20 public testToken;
+    
+    address public owner;
+    address public user;
+    address public nearRecipient;
+    
+    // Test constants
+    uint256 public constant MIN_NEAR_DEPOSIT = 0.1 ether;
+    uint256 public constant NEAR_CHAIN_ID = 397;
+    
+    event NearDepositInitiated(
+        address indexed sender,
+        string nearRecipient,
+        uint256 amount,
+        bytes32 secretHash,
+        uint256 timelock
+    );
+    
+    event NearWithdrawalCompleted(
+        bytes32 indexed secretHash,
+        string nearRecipient,
+        uint256 amount
+    );
+    
+    event NearRefunded(
+        bytes32 indexed secretHash,
+        string nearRecipient,
+        uint256 amount
+    );
+
+    function setUp() public {
+        owner = address(this);
+        user = address(0x1);
+        nearRecipient = address(0x2);
+        
+        // Deploy mock contracts
+        mockFactory = new MockEscrowFactory();
+        mockLOP = new MockOrderMixin();
+        testToken = new MockERC20("Test Token", "TEST");
+        
+        // Deploy resolver
+        resolver = new Resolver(
+            IEscrowFactory(address(mockFactory)),
+            IOrderMixin(address(mockLOP)),
+            owner
+        );
+        
+        // Fund test accounts
+        vm.deal(user, 10 ether);
+        vm.deal(owner, 10 ether);
+        testToken.mint(user, 1000000 * 10**18);
+    }
+    
+    // ==================== Basic Functionality Tests ====================
+    
+    function test_Deployment() public {
+        assertTrue(address(resolver) != address(0));
+        assertEq(resolver.owner(), owner);
+        assertEq(resolver.NEAR_CHAIN_ID(), NEAR_CHAIN_ID);
+        assertEq(resolver.MIN_NEAR_DEPOSIT(), MIN_NEAR_DEPOSIT);
+    }
+    
+    function test_ReceiveEther() public {
+        uint256 amount = 1 ether;
+        
+        vm.prank(user);
+        (bool success,) = address(resolver).call{value: amount}("");
+        assertTrue(success);
+        assertEq(address(resolver).balance, amount);
+    }
+    
+    // ==================== NEAR Deposit Tests ====================
+    
+    function test_DepositToNear_Success() public {
+        string memory nearAccount = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 timelock = block.timestamp + 1 hours;
+        uint256 amount = 1 ether;
+        
+        vm.expectEmit(true, false, false, true);
+        emit NearDepositInitiated(user, nearAccount, amount, secretHash, timelock);
+        
+        vm.prank(user);
+        resolver.depositToNear{value: amount}(nearAccount, secretHash, timelock);
+        
+        // Verify deposit was stored
+        (
+            address sender,
+            string memory storedNearRecipient,
+            uint256 storedAmount,
+            bytes32 storedSecretHash,
+            uint256 storedTimelock,
+            bool withdrawn
+        ) = resolver.nearDeposits(keccak256(abi.encodePacked(block.chainid, nearAccount)));
+        
+        assertEq(sender, user);
+        assertEq(storedNearRecipient, nearAccount);
+        assertEq(storedAmount, amount);
+        assertEq(storedSecretHash, secretHash);
+        assertEq(storedTimelock, timelock);
+        assertFalse(withdrawn);
+    }
+    
+    function test_DepositToNear_ZeroAmount() public {
+        string memory nearAccount = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 timelock = block.timestamp + 1 hours;
+        
+        vm.prank(user);
+        vm.expectRevert("Resolver: amount must be greater than 0");
+        resolver.depositToNear{value: 0}(nearAccount, secretHash, timelock);
+    }
+    
+    function test_DepositToNear_InvalidTimelock() public {
+        string memory nearAccount = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 timelock = block.timestamp - 1; // Past timelock
+        uint256 amount = 1 ether;
+        
+        vm.prank(user);
+        vm.expectRevert("Resolver: invalid timelock");
+        resolver.depositToNear{value: amount}(nearAccount, secretHash, timelock);
+    }
+    
+    // ==================== NEAR Withdrawal Tests ====================
+    
+    function test_CompleteNearWithdrawal_Success() public {
+        // First create a deposit
+        string memory nearAccount = "alice.near";
+        bytes32 secret = keccak256("secret");
+        bytes32 secretHash = keccak256(abi.encodePacked(secret));
+        uint256 timelock = block.timestamp + 1 hours;
+        uint256 amount = 1 ether;
+        
+        vm.prank(user);
+        resolver.depositToNear{value: amount}(nearAccount, secretHash, timelock);
+        
+        // Complete the withdrawal
+        vm.expectEmit(true, false, false, true);
+        emit NearWithdrawalCompleted(secretHash, nearAccount, amount);
+        
+        resolver.completeNearWithdrawal(secret, nearAccount);
+        
+        // Verify deposit was marked as withdrawn
+        (,,,,, bool withdrawn) = resolver.nearDeposits(keccak256(abi.encodePacked(block.chainid, nearAccount)));
+        assertTrue(withdrawn);
+    }
+    
+    function test_CompleteNearWithdrawal_DepositNotFound() public {
+        bytes32 secret = keccak256("secret");
+        string memory nearAccount = "alice.near";
+        
+        vm.expectRevert("Deposit not found");
+        resolver.completeNearWithdrawal(secret, nearAccount);
+    }
+    
+    function test_CompleteNearWithdrawal_AlreadyWithdrawn() public {
+        // Create and complete a withdrawal first
+        string memory nearAccount = "alice.near";
+        bytes32 secret = keccak256("secret");
+        bytes32 secretHash = keccak256(abi.encodePacked(secret));
+        uint256 timelock = block.timestamp + 1 hours;
+        uint256 amount = 1 ether;
+        
+        vm.prank(user);
+        resolver.depositToNear{value: amount}(nearAccount, secretHash, timelock);
+        resolver.completeNearWithdrawal(secret, nearAccount);
+        
+        // Try to withdraw again
+        vm.expectRevert("Deposit already withdrawn");
+        resolver.completeNearWithdrawal(secret, nearAccount);
+    }
+    
+    // ==================== NEAR Refund Tests ====================
+    
+    function test_RefundNearDeposit_Success() public {
+        string memory nearAccount = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 timelock = block.timestamp + 1 hours;
+        uint256 amount = 1 ether;
+        
+        // Create deposit
+        vm.prank(user);
+        resolver.depositToNear{value: amount}(nearAccount, secretHash, timelock);
+        
+        // Fast forward past timelock
+        vm.warp(timelock + 1);
+        
+        // Refund should succeed
+        vm.expectEmit(true, false, false, true);
+        emit NearRefunded(secretHash, nearAccount, amount);
+        
+        resolver.refundNearDeposit(nearAccount, secretHash);
+    }
+    
+    function test_RefundNearDeposit_OnlyOwner() public {
+        string memory nearAccount = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        
+        vm.prank(user);
+        vm.expectRevert();
+        resolver.refundNearDeposit(nearAccount, secretHash);
+    }
+    
+    function test_RefundNearDeposit_NoActiveDeposit() public {
+        string memory nearAccount = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        
+        vm.expectRevert("Resolver: no active deposit");
+        resolver.refundNearDeposit(nearAccount, secretHash);
+    }
+    
+    // ==================== Escrow Deployment Tests ====================
+    
+    function test_DeploySrc_OnlyOwner() public {
+        IBaseEscrow.Immutables memory immutables = _createMockImmutables();
+        IOrderMixin.Order memory order = _createMockOrder();
+        bytes32 r = bytes32(uint256(1));
+        bytes32 vs = bytes32(uint256(2));
+        uint256 amount = 1000;
+        TakerTraits takerTraits = TakerTraits.wrap(0);
+        bytes memory args = "";
+        
+        // Should fail when called by non-owner
+        vm.prank(user);
+        vm.expectRevert();
+        resolver.deploySrc(immutables, order, r, vs, amount, takerTraits, args);
+        
+        // Should succeed when called by owner
+        resolver.deploySrc(immutables, order, r, vs, amount, takerTraits, args);
+    }
+    
+    function test_DeployDst_OnlyOwner() public {
+        IBaseEscrow.Immutables memory immutables = _createMockImmutables();
+        uint256 srcCancellationTimestamp = block.timestamp + 1 hours;
+        
+        // Should fail when called by non-owner
+        vm.prank(user);
+        vm.expectRevert();
+        resolver.deployDst(immutables, srcCancellationTimestamp);
+        
+        // Should succeed when called by owner
+        resolver.deployDst(immutables, srcCancellationTimestamp);
+    }
+    
+    // ==================== Escrow Interaction Tests ====================
+    
+    function test_Withdraw_Success() public {
+        MockEscrow mockEscrow = new MockEscrow();
+        bytes32 secret = keccak256("secret");
+        IBaseEscrow.Immutables memory immutables = _createMockImmutables();
+        
+        resolver.withdraw(IEscrow(address(mockEscrow)), secret, immutables);
+        
+        assertTrue(mockEscrow.withdrawn());
+    }
+    
+    function test_Cancel_Success() public {
+        MockEscrow mockEscrow = new MockEscrow();
+        IBaseEscrow.Immutables memory immutables = _createMockImmutables();
+        
+        resolver.cancel(IEscrow(address(mockEscrow)), immutables);
+        
+        assertTrue(mockEscrow.cancelled());
+    }
+    
+    // ==================== Arbitrary Calls Tests ====================
+    
+    function test_ArbitraryCalls_OnlyOwner() public {
+        address[] memory targets = new address[](1);
+        bytes[] memory arguments = new bytes[](1);
+        targets[0] = address(testToken);
+        arguments[0] = abi.encodeWithSignature("transfer(address,uint256)", user, 1000);
+        
+        // Should fail when called by non-owner
+        vm.prank(user);
+        vm.expectRevert();
+        resolver.arbitraryCalls(targets, arguments);
+        
+        // Should succeed when called by owner
+        resolver.arbitraryCalls(targets, arguments);
+    }
+    
+    function test_ArbitraryCalls_LengthMismatch() public {
+        address[] memory targets = new address[](1);
+        bytes[] memory arguments = new bytes[](2);
+        targets[0] = address(testToken);
+        arguments[0] = abi.encodeWithSignature("transfer(address,uint256)", user, 1000);
+        arguments[1] = abi.encodeWithSignature("transfer(address,uint256)", user, 2000);
+        
+        vm.expectRevert(Resolver.LengthMismatch.selector);
+        resolver.arbitraryCalls(targets, arguments);
+    }
+    
+    // ==================== Integration Tests ====================
+    
+    function test_Integration_FullNearDepositWithdrawFlow() public {
+        string memory nearAccount = "alice.near";
+        bytes32 secret = keccak256("secret");
+        bytes32 secretHash = keccak256(abi.encodePacked(secret));
+        uint256 timelock = block.timestamp + 1 hours;
+        uint256 amount = 1 ether;
+        
+        // 1. Create deposit
+        vm.prank(user);
+        resolver.depositToNear{value: amount}(nearAccount, secretHash, timelock);
+        
+        // Verify deposit exists
+        (address sender,,,,,) = resolver.nearDeposits(keccak256(abi.encodePacked(block.chainid, nearAccount)));
+        assertEq(sender, user);
+        
+        // 2. Complete withdrawal
+        resolver.completeNearWithdrawal(secret, nearAccount);
+        
+        // Verify withdrawal completed
+        (,,,,, bool withdrawn) = resolver.nearDeposits(keccak256(abi.encodePacked(block.chainid, nearAccount)));
+        assertTrue(withdrawn);
+    }
+    
+    function test_Integration_EscrowWithNearCleanup() public {
+        MockEscrow mockEscrow = new MockEscrow();
+        bytes32 secret = keccak256("secret");
+        IBaseEscrow.Immutables memory immutables = _createMockImmutables();
+        
+        // Create a mock NEAR deposit for cleanup testing
+        string memory nearAccount = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 timelock = block.timestamp + 1 hours;
+        uint256 amount = 1 ether;
+        
+        vm.prank(user);
+        resolver.depositToNear{value: amount}(nearAccount, secretHash, timelock);
+        
+        // Withdraw from escrow (should trigger NEAR cleanup)
+        resolver.withdraw(IEscrow(address(mockEscrow)), secret, immutables);
+        
+        assertTrue(mockEscrow.withdrawn());
+    }
+    
+    // ==================== Helper Functions ====================
+    
+    function _createMockImmutables() internal view returns (IBaseEscrow.Immutables memory) {
+        return IBaseEscrow.Immutables({
+            orderHash: keccak256("order"),
+            hashlock: keccak256("secret"),
+            maker: user,
+            taker: nearRecipient,
+            token: address(testToken),
+            amount: 1000,
+            safetyDeposit: 0.1 ether,
+            timelocks: 0
+        });
+    }
+    
+    function _createMockOrder() internal view returns (IOrderMixin.Order memory) {
+        return IOrderMixin.Order({
+            salt: 1,
+            maker: user,
+            receiver: nearRecipient,
+            makerAsset: address(testToken),
+            takerAsset: address(0), // ETH
+            makingAmount: 1000,
+            takingAmount: 1 ether,
+            makerTraits: 0,
+            interactions: ""
+        });
+    }
+    
+    // ==================== Edge Cases and Error Conditions ====================
+    
+    function test_EdgeCase_MultipleDepositsFromSameUser() public {
+        string memory nearAccount1 = "alice.near";
+        string memory nearAccount2 = "bob.near";
+        bytes32 secretHash1 = keccak256("secret1");
+        bytes32 secretHash2 = keccak256("secret2");
+        uint256 timelock = block.timestamp + 1 hours;
+        uint256 amount = 1 ether;
+        
+        vm.startPrank(user);
+        resolver.depositToNear{value: amount}(nearAccount1, secretHash1, timelock);
+        resolver.depositToNear{value: amount}(nearAccount2, secretHash2, timelock);
+        vm.stopPrank();
+        
+        // Both deposits should exist independently
+        (address sender1,,,,,) = resolver.nearDeposits(keccak256(abi.encodePacked(block.chainid, nearAccount1)));
+        (address sender2,,,,,) = resolver.nearDeposits(keccak256(abi.encodePacked(block.chainid, nearAccount2)));
+        
+        assertEq(sender1, user);
+        assertEq(sender2, user);
+    }
+    
+    function test_EdgeCase_LargeDeposit() public {
+        string memory nearAccount = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 timelock = block.timestamp + 1 hours;
+        uint256 amount = 100 ether; // Large amount
+        
+        vm.deal(user, amount);
+        
+        vm.prank(user);
+        resolver.depositToNear{value: amount}(nearAccount, secretHash, timelock);
+        
+        (,, uint256 storedAmount,,,) = resolver.nearDeposits(keccak256(abi.encodePacked(block.chainid, nearAccount)));
+        assertEq(storedAmount, amount);
+    }
+    
+    function test_EdgeCase_MinimumDeposit() public {
+        string memory nearAccount = "alice.near";
+        bytes32 secretHash = keccak256("secret");
+        uint256 timelock = block.timestamp + 1 hours;
+        uint256 amount = 1 wei; // Minimum possible amount
+        
+        vm.prank(user);
+        resolver.depositToNear{value: amount}(nearAccount, secretHash, timelock);
+        
+        (,, uint256 storedAmount,,,) = resolver.nearDeposits(keccak256(abi.encodePacked(block.chainid, nearAccount)));
+        assertEq(storedAmount, amount);
+    }
+}

@@ -2,13 +2,36 @@
   "extends": "@1inch/tsconfig",
   "compilerOptions": {
     "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "moduleResolution": "node",
     "moduleDetection": "auto",
     "outDir": "./dist",
-    "rootDir": "./s",
-    "lib": ["ESNext"],
-    "target": "ES2023",
-    "removeComments": false
+    "rootDir": ".",
+    "lib": ["ESNext", "DOM"],
+    "target": "ES2020",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "noImplicitThis": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["node", "jest"],
+    "typeRoots": [
+      "./node_modules/@types"
+    ]
   },
-  "include": ["./src"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

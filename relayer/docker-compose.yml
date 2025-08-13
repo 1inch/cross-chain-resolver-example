@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # Relayer service
+  relayer:
+    build: .
+    container_name: cross-chain-relayer
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/usr/src/app/data
+    networks:
+      - relayer-network
+    # Uncomment the following lines to enable health checks
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 10s
+
+  # Prometheus for metrics (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - relayer-network
+    depends_on:
+      - relayer
+
+  # Grafana for visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - relayer-network
+    depends_on:
+      - prometheus
+
+networks:
+  relayer-network:
+    driver: bridge
+
+volumes:
+  grafana-storage:

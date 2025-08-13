@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "messages": {
+    "conc_4_1754978638985": {
+      "status": "failed",
+      "updatedAt": 1754978639004,
+      "error": "StorageService initialization failed: Failed to ensure storage directory: Failed to write to storage directory '/Users/defiankit/Desktop/fusionswapn/cross-chain-resolver-example/storage/test-1754978638984': Error: ENOENT: no such file or directory, unlink '/Users/defiankit/Desktop/fusionswapn/cross-chain-resolver-example/storage/test-1754978638984/.write-test'"
+    },
+    "conc_0_1754978638985": {
+      "status": "failed",
+      "updatedAt": 1754978639011,
+      "error": "Failed to persist messages to file: Error: ENOENT: no such file or directory, stat '/Users/defiankit/Desktop/fusionswapn/cross-chain-resolver-example/storage/test-1754978638984/ethereum_processed_messages.json.tmp'"
+    },
+    "conc_2_1754978638985": {
+      "status": "failed",
+      "updatedAt": 1754978639008,
+      "error": "Failed to persist messages to file: No write permission in directory: /Users/defiankit/Desktop/fusionswapn/cross-chain-resolver-example/storage/test-1754978638984. Error: ENOENT: no such file or directory, unlink '/Users/defiankit/Desktop/fusionswapn/cross-chain-resolver-example/storage/test-1754978638984/.write-test-1754978639006'"
+    },
+    "conc_3_1754978638985": {
+      "status": "failed",
+      "updatedAt": 1754978639008,
+      "error": "Failed to persist messages to file: No write permission in directory: /Users/defiankit/Desktop/fusionswapn/cross-chain-resolver-example/storage/test-1754978638984. Error: ENOENT: no such file or directory, unlink '/Users/defiankit/Desktop/fusionswapn/cross-chain-resolver-example/storage/test-1754978638984/.write-test-1754978639006'"
+    },
+    "conc_1_1754978638985": {
+      "status": "failed",
+      "updatedAt": 1754978639009,
+      "error": "Failed to persist messages to file: No write permission in directory: /Users/defiankit/Desktop/fusionswapn/cross-chain-resolver-example/storage/test-1754978638984. Error: ENOENT: no such file or directory, unlink '/Users/defiankit/Desktop/fusionswapn/cross-chain-resolver-example/storage/test-1754978638984/.write-test-1754978639006'"
+    }
+  }
+}

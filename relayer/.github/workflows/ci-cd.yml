@@ -1,0 +1,119 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+defaults:
+  run:
+    working-directory: ./relayer
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      # Start a local Ethereum node for testing
+      ganache:
+        image: trufflesuite/ganache:latest
+        ports:
+          - 8545:8545
+        options: >-
+          --wallet.deterministic
+          --wallet.totalAccounts=10
+          --wallet.defaultBalance=1000
+          --miner.blockTime=1
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js 18
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install Dependencies
+      run: npm ci
+    
+    - name: Lint
+      run: npm run lint
+    
+    - name: Run Tests
+      run: npm test
+      env:
+        CI: true
+        ETHEREUM_RPC_URL: http://localhost:8545
+        ETHEREUM_PRIVATE_KEY: 0x4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d # Test private key (DO NOT USE IN PRODUCTION)
+        ETHEREUM_ESCROW_FACTORY_ADDRESS: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+        NEAR_NETWORK_ID: testnet
+        NEAR_NODE_URL: https://rpc.testnet.near.org
+        NEAR_ACCOUNT_ID: test.testnet
+        NEAR_PRIVATE_KEY: ed25519:2wyRcSwSuHtRVmkMCGjZQkJ6g7p9wUq6KJ3jkgxMn4eTQoX1J9qZ8rLmNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz123456
+        NEAR_ESCROW_FACTORY_ADDRESS: escrow.testnet
+        LOG_LEVEL: debug
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: test
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./relayer
+        push: true
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/cross-chain-relayer:staging
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    # Add deployment steps for your staging environment here
+    # For example, you might use SSH to deploy to a staging server
+    # or trigger a deployment on your container orchestration platform
+
+  deploy-production:
+    name: Deploy to Production
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./relayer
+        push: true
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/cross-chain-relayer:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    # Add deployment steps for your production environment here
+    # This would typically involve updating your container orchestration
+    # to use the newly built image

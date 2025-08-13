@@ -1,0 +1,353 @@
+/**
+ * Integration tests for `EthereumRelayer`
+ * - Uses standardized mocks in `tests/mocks/`
+ * - Aligns strictly with `src/relay/EthereumRelayer.ts` public API
+ */
+
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { ethers } from 'ethers';
+
+import { EthereumRelayer } from '../../src/relay/EthereumRelayer';
+import { MessageType, type DepositMessage, type WithdrawalMessage, type RefundMessage } from '../../src/types/interfaces';
+import { MockProvider, MockJsonRpcSigner } from '../mocks/ethers-mock-enhanced';
+import { MockNearAccount } from '../mocks/near-api-mock';
+import { EthereumContractService } from '../../src/services/EthereumContractService';
+
+// Silence logs
+jest.mock('../../src/utils/logger', () => ({
+  __esModule: true,
+  default: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
+// Stub the EthereumEventListener to avoid real polling
+jest.mock('../../src/services/EthereumEventListener', () => ({
+  __esModule: true,
+  default: class {
+    start = jest.fn(async () => {});
+    stop = jest.fn(async () => {});
+  },
+}));
+
+// Helpers
+const SEPOLIA_CHAIN_ID = 11155111;
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+
+function setupTest() {
+  const provider = new MockProvider();
+  const signer = new MockJsonRpcSigner(provider, '0xF39Fd6e51aad88F6F4ce6aB8827279cffFb92266');
+  const nearAccount = new MockNearAccount('relayer.near');
+
+  const relayer = new EthereumRelayer({
+    provider: provider as unknown as ethers.providers.JsonRpcProvider,
+    signer: signer as unknown as ethers.Signer,
+    nearAccount: nearAccount as any,
+    ethereumFactoryAddress: '0x1111111111111111111111111111111111111111',
+    ethereumFactoryAbi: [
+      'event EscrowCreated(address indexed escrowAddress)',
+      'function createEscrow(address recipient, bytes32 secretHash, uint256 timelock, uint256 chainId) payable returns (address)'
+    ],
+    chainId: SEPOLIA_CHAIN_ID,
+  } as any);
+
+  return { relayer, provider, signer, nearAccount };
+}
+
+describe('EthereumRelayer - Integration', () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+    process.env.NEAR_ESCROW_CONTRACT_ID = 'escrow.near';
+  });
+
+  it('starts and stops the relayer', async () => {
+    const { relayer } = setupTest();
+    await relayer.start();
+    expect(relayer.isRelayerRunning()).toBe(true);
+    await relayer.stop();
+    expect(relayer.isRelayerRunning()).toBe(false);
+  });
+
+  it('processes a DEPOSIT message and handles EscrowCreated', async () => {
+    const { relayer } = setupTest();
+
+    jest
+      .spyOn(EthereumContractService.prototype, 'executeFactoryTransaction')
+      .mockResolvedValue({
+        wait: async () => ({
+          transactionHash: '0x' + '1'.repeat(64),
+          events: [
+            { event: 'EscrowCreated', args: { escrowAddress: '0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD' } },
+          ],
+        }),
+      } as any);
+
+    const msg: DepositMessage = {
+      type: MessageType.DEPOSIT,
+      messageId: 'msg_1',
+      sourceChain: 'NEAR',
+      destChain: 'ETH',
+      sender: 'alice.near',
+      recipient: '0x2222222222222222222222222222222222222222',
+      amount: '1000000000000000000',
+      token: ZERO_ADDR,
+      secretHash: '0x' + '4'.repeat(64),
+      timelock: Math.floor(Date.now() / 1000) + 3600,
+      data: {
+        txHash: '0x' + '3'.repeat(64),
+      },
+      timestamp: Date.now(),
+    };
+
+    await relayer.processMessage(msg);
+    expect(relayer.getProcessedMessageCount()).toBe(1);
+  });
+
+  it('processes a WITHDRAWAL message', async () => {
+    const { relayer } = setupTest();
+
+    jest
+      .spyOn(EthereumContractService.prototype, 'findEscrowByParams')
+      .mockResolvedValue({ escrowAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE' } as any);
+
+    const execSpy = jest
+      .spyOn(EthereumContractService.prototype, 'executeWithdrawal')
+      .mockResolvedValue(undefined as any);
+
+    const msg: WithdrawalMessage = {
+      type: MessageType.WITHDRAWAL,
+      messageId: 'msg_2',
+      sourceChain: 'ETH',
+      destChain: 'NEAR',
+      sender: '0x3333333333333333333333333333333333333333',
+      recipient: 'bob.near',
+      amount: '500000000000000000',
+      token: ZERO_ADDR,
+      data: { txHash: '0x' + '5'.repeat(64) },
+      secret: '0x' + '6'.repeat(64),
+      timestamp: Date.now(),
+    };
+
+    await relayer.processMessage(msg);
+    expect(execSpy).toHaveBeenCalledTimes(1);
+    expect(relayer.getProcessedMessageCount()).toBe(1);
+  });
+
+  it('processes a REFUND message', async () => {
+    const { relayer } = setupTest();
+
+    jest
+      .spyOn(EthereumContractService.prototype, 'findEscrowByParams')
+      .mockResolvedValue({ escrowAddress: '0xFfFfFfFFfFFfFFfFFfFFFFFffffFffffFFFfFFfF' } as any);
+
+    const refundSpy = jest
+      .spyOn(EthereumContractService.prototype, 'executeRefund')
+      .mockResolvedValue(undefined as any);
+
+    const msg: RefundMessage = {
+      type: MessageType.REFUND,
+      messageId: 'msg_3',
+      sourceChain: 'ETH',
+      destChain: 'NEAR',
+      sender: '0x4444444444444444444444444444444444444444',
+      recipient: 'carol.near',
+      amount: '1000000000000000000',
+      token: ZERO_ADDR,
+      data: { txHash: '0x' + '7'.repeat(64) },
+      reason: 'timeout',
+      timestamp: Date.now(),
+    };
+
+    await relayer.processMessage(msg);
+    expect(refundSpy).toHaveBeenCalledTimes(1);
+    expect(relayer.getProcessedMessageCount()).toBe(1);
+  });
+
+  it('handles concurrent DEPOSIT messages', async () => {
+    const { relayer } = setupTest();
+
+    jest
+      .spyOn(EthereumContractService.prototype, 'executeFactoryTransaction')
+      .mockResolvedValue({
+        wait: async () => ({
+          transactionHash: '0x' + '2'.repeat(64),
+          events: [
+            { event: 'EscrowCreated', args: { escrowAddress: '0x' + 'a'.repeat(40) } },
+          ],
+        }),
+      } as any);
+
+    const messages: DepositMessage[] = Array.from({ length: 5 }, (_, i) => ({
+      type: MessageType.DEPOSIT,
+      messageId: `msg_${i}`,
+      sourceChain: 'NEAR',
+      destChain: 'ETH',
+      sender: 'alice.near',
+      recipient: '0x2222222222222222222222222222222222222222',
+      amount: '1000000000000000000',
+      token: ZERO_ADDR,
+      secretHash: ('0x' + '8'.repeat(63) + i),
+      timelock: Math.floor(Date.now() / 1000) + 3600,
+      data: {
+        txHash: ('0x' + '9'.repeat(63) + i),
+      },
+      timestamp: Date.now(),
+    }));
+
+    await Promise.all(messages.map((m) => relayer.processMessage(m)));
+    expect(relayer.getProcessedMessageCount()).toBe(5);
+  });
+
+  it('rapid start/stop cycles are safe', async () => {
+    const { relayer } = setupTest();
+    for (let i = 0; i < 3; i++) {
+      await relayer.start();
+      expect(relayer.isRelayerRunning()).toBe(true);
+      await relayer.stop();
+      expect(relayer.isRelayerRunning()).toBe(false);
+    }
+  });
+});
+/*
+
+    // Mock factory tx to resolve with EscrowCreated event
+    jest
+      .spyOn(EthereumContractService.prototype, 'executeFactoryTransaction')
+      .mockResolvedValue({
+        wait: async () => ({
+          transactionHash: '0x' + '1'.repeat(64),
+          events: [
+            { event: 'EscrowCreated', args: { escrowAddress: '0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD' } },
+          ],
+        }),
+      } as any);
+
+    const msg: DepositMessage = {
+      type: 'DEPOSIT',
+      messageId: 'msg_1',
+      sourceChain: 'NEAR',
+      destChain: 'ETH',
+      sender: 'alice.near',
+      recipient: '0x2222222222222222222222222222222222222222',
+      amount: '1000000000000000000',
+      token: ZERO_ADDR,
+      data: {
+        txHash: '0x' + '3'.repeat(64),
+        secretHash: '0x' + '4'.repeat(64),
+        timelock: Math.floor(Date.now() / 1000) + 3600,
+      },
+      timestamp: Date.now(),
+    };
+
+    await relayer.processMessage(msg);
+    expect(relayer.getProcessedMessageCount()).toBe(1);
+  });
+
+  it('processes a WITHDRAWAL message: finds escrow and executes withdrawal', async () => {
+    const { relayer } = setupTest();
+
+    jest
+      .spyOn(EthereumContractService.prototype, 'findEscrowByParams')
+      .mockResolvedValue({ escrowAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE' } as any);
+
+    const execSpy = jest
+      .spyOn(EthereumContractService.prototype, 'executeWithdrawal')
+      .mockResolvedValue(undefined as any);
+
+    const msg: WithdrawalMessage = {
+      type: 'WITHDRAWAL',
+      messageId: 'msg_2',
+      sourceChain: 'ETH',
+      destChain: 'NEAR',
+      sender: '0x3333333333333333333333333333333333333333',
+      recipient: 'bob.near',
+      amount: '500000000000000000',
+      token: ZERO_ADDR,
+      data: { txHash: '0x' + '5'.repeat(64) },
+      secret: '0x' + '6'.repeat(64),
+      timestamp: Date.now(),
+    };
+
+    await relayer.processMessage(msg);
+    expect(execSpy).toHaveBeenCalledTimes(1);
+    expect(relayer.getProcessedMessageCount()).toBe(1);
+  });
+
+  it('processes a REFUND message: finds escrow and executes refund', async () => {
+    const { relayer } = setupTest();
+
+    jest
+      .spyOn(EthereumContractService.prototype, 'findEscrowByParams')
+      .mockResolvedValue({ escrowAddress: '0xFfFfFfFFfFFfFFfFFfFFFFFffffFffffFFFfFFfF' } as any);
+
+    const refundSpy = jest
+      .spyOn(EthereumContractService.prototype, 'executeRefund')
+      .mockResolvedValue(undefined as any);
+
+    const msg: RefundMessage = {
+      type: 'REFUND',
+      messageId: 'msg_3',
+      sourceChain: 'ETH',
+      destChain: 'NEAR',
+      sender: '0x4444444444444444444444444444444444444444',
+      recipient: 'carol.near',
+      amount: '1000000000000000000',
+      token: ZERO_ADDR,
+      data: { txHash: '0x' + '7'.repeat(64) },
+      reason: 'timeout',
+      timestamp: Date.now(),
+    };
+
+    await relayer.processMessage(msg);
+    expect(refundSpy).toHaveBeenCalledTimes(1);
+    expect(relayer.getProcessedMessageCount()).toBe(1);
+  });
+
+  it('handles concurrent DEPOSIT messages', async () => {
+    const { relayer } = setupTest();
+
+    jest
+      .spyOn(EthereumContractService.prototype, 'executeFactoryTransaction')
+      .mockResolvedValue({
+        wait: async () => ({
+          transactionHash: '0x' + '2'.repeat(64),
+          events: [
+            { event: 'EscrowCreated', args: { escrowAddress: '0x' + 'a'.repeat(40) } },
+          ],
+        }),
+      } as any);
+
+    const messages: DepositMessage[] = Array.from({ length: 5 }, (_, i) => ({
+      type: 'DEPOSIT',
+      messageId: `msg_${i}`,
+      sourceChain: 'NEAR',
+      destChain: 'ETH',
+      sender: 'alice.near',
+      recipient: '0x2222222222222222222222222222222222222222',
+      amount: '1000000000000000000',
+      token: ZERO_ADDR,
+      data: {
+        txHash: ('0x' + '9'.repeat(63) + i),
+        secretHash: ('0x' + '8'.repeat(63) + i),
+        timelock: Math.floor(Date.now() / 1000) + 3600,
+      },
+      timestamp: Date.now(),
+    }));
+
+    await Promise.all(messages.map((m) => relayer.processMessage(m)));
+    expect(relayer.getProcessedMessageCount()).toBe(5);
+  });
+
+  it('rapid start/stop cycles are safe', async () => {
+    const { relayer } = setupTest();
+    for (let i = 0; i < 3; i++) {
+      await relayer.start();
+      expect(relayer.isRelayerRunning()).toBe(true);
+      await relayer.stop();
+      expect(relayer.isRelayerRunning()).toBe(false);
+    }
+  });
+});

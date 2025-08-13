@@ -1,21 +1,8 @@
 /*
- * For a detailed explanation regarding each configuration property and type check, visit:
- * https://jestjs.io/docs/en/configuration.html
+ * Root Jest config delegating to relayer/jest.config.cjs.
+ * Keeps a single source of truth under CommonJS for relayer tests.
  */
 
 export default {
-    clearMocks: true,
-    moduleFileExtensions: ['js', 'json', 'ts'],
-    rootDir: 'tests',
-    testEnvironment: 'node',
-    testMatch: ['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[tj]s?(x)'],
-    testPathIgnorePatterns: ['/node_modules/', '/dist/'],
-    transform: {
-        '^.+\\.(t|j)s$': ['@swc/jest']
-    },
-    extensionsToTreatAsEsm: ['.ts', '.tsx'],
-    transformIgnorePatterns: [
-        // "/node_modules/",
-        // "\\.pnp\\.[^\\/]+$",
-    ]
-}
+  projects: ['<rootDir>/relayer/jest.config.cjs'],
+};

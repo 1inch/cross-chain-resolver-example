@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "messages": {
+    "retry_factory_1754978639011": {
+      "status": "failed",
+      "updatedAt": 1754978639018,
+      "error": "this.contractService.getSignerAddress is not a function"
+    }
+  }
+}
