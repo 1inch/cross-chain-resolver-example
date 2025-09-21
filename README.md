@@ -14,10 +14,10 @@ Install [foundry](https://book.getfoundry.sh/getting-started/installation)
 curl -L https://foundry.paradigm.xyz | bash
 ```
 
-Install contract deps
+Initialize contract submodules
 
 ```shell
-forge install
+git submodule update --init --recursive
 ```
 
 ## Running
@@ -34,6 +34,29 @@ SRC_CHAIN_RPC=ETH_FORK_URL DST_CHAIN_RPC=BNB_FORK_URL pnpm test
 |----------|------------------------------|
 | Ethereum | https://eth.merkle.io        |
 | BSC      | wss://bsc-rpc.publicnode.com |
+
+## Environment
+
+Copy `.env.example` to `.env` or export the variables in your shell before running tests:
+
+```shell
+cp .env.example .env
+# then edit values as needed
+```
+
+Required variables:
+
+- `SRC_CHAIN_RPC`: HTTPS/WS RPC for Ethereum mainnet fork
+- `DST_CHAIN_RPC`: HTTPS/WS RPC for BSC mainnet fork
+- `SRC_CHAIN_CREATE_FORK`: `true`/`false` to run a local fork via Anvil
+- `DST_CHAIN_CREATE_FORK`: `true`/`false` to run a local fork via Anvil
+
+## Troubleshooting
+
+- BSC RPC over WSS may fail to fork in some environments. If you see forking errors, try switching to an HTTPS endpoint, e.g. `https://bsc-dataseed.binance.org`.
+- Contracts are built with Foundry and artifacts are emitted to `dist/contracts` (configured in `foundry.toml`). Tests expect artifacts at that path.
+- Node.js 22 is required (see `package.json` `engines` and Volta pin). Use Volta or nvm to match the version.
+
 
 ## Test accounts
 

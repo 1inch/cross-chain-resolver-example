@@ -9,6 +9,7 @@ import {
     computeAddress,
     ContractFactory,
     JsonRpcProvider,
+    InterfaceAbi,
     MaxUint256,
     parseEther,
     parseUnits,
@@ -743,8 +744,15 @@ async function getProvider(cnf: ChainConfig): Promise<{node?: CreateServerReturn
         }
     }
 
+    type AnvilOptions = {forkUrl: string; chainId: number; forkBlockNumber?: number}
+    const instanceOptions: AnvilOptions = {
+        forkUrl: cnf.url,
+        chainId: cnf.chainId,
+        ...(cnf.forkBlockNumber ? ({forkBlockNumber: cnf.forkBlockNumber} as AnvilOptions) : {})
+    }
+
     const node = createServer({
-        instance: anvil({forkUrl: cnf.url, chainId: cnf.chainId}),
+        instance: anvil(instanceOptions),
         limit: 1
     })
     await node.start()
@@ -767,12 +775,13 @@ async function getProvider(cnf: ChainConfig): Promise<{node?: CreateServerReturn
  * Deploy contract and return its address
  */
 async function deploy(
-    json: {abi: any; bytecode: any},
+    json: {abi: InterfaceAbi; bytecode: string | {object: string}},
     params: unknown[],
     provider: JsonRpcProvider,
     deployer: SignerWallet
 ): Promise<string> {
-    const deployed = await new ContractFactory(json.abi, json.bytecode, deployer).deploy(...params)
+    const bytecode = typeof json.bytecode === 'string' ? json.bytecode : json.bytecode.object
+    const deployed = await new ContractFactory(json.abi, bytecode, deployer).deploy(...params)
     await deployed.waitForDeployment()
 
     return await deployed.getAddress()

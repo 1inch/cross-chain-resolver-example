@@ -5,10 +5,13 @@
     "moduleResolution": "Bundler",
     "moduleDetection": "auto",
     "outDir": "./dist",
-    "rootDir": "./s",
+    "rootDir": ".",
     "lib": ["ESNext"],
     "target": "ES2023",
-    "removeComments": false
+    "removeComments": false,
+    "types": ["jest", "node"],
+    "skipLibCheck": true
   },
-  "include": ["./src"]
+  "include": ["./src", "./tests"],
+  "exclude": ["./dist"]
 }
