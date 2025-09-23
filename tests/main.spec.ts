@@ -9,6 +9,9 @@ import {
     computeAddress,
     ContractFactory,
     JsonRpcProvider,
+    Interface,
+    InterfaceAbi,
+    AbiCoder,
     MaxUint256,
     parseEther,
     parseUnits,
@@ -22,7 +25,7 @@ import {Wallet} from './wallet'
 import {Resolver} from './resolver'
 import {EscrowFactory} from './escrow-factory'
 import factoryContract from '../dist/contracts/TestEscrowFactory.sol/TestEscrowFactory.json'
-import resolverContract from '../dist/contracts/Resolver.sol/Resolver.json'
+import resolverArtifact from '../dist/contracts/Resolver.sol/Resolver.json'
 
 const {Address} = Sdk
 
@@ -202,6 +205,38 @@ describe('Resolving example', () => {
 
             console.log(`[${srcChainId}]`, `Order ${orderHash} filled for ${fillAmount} in tx ${orderFillHash}`)
 
+            // Assert SrcEscrowPlanned event and decode canonicalPayload
+
+            const srcReceipt = await src.provider.getTransactionReceipt(orderFillHash)
+
+            if (!srcReceipt) throw new Error('src receipt not found')
+
+            const resolverIface = new Interface(resolverArtifact.abi)
+            const srcPlanned = srcReceipt.logs
+                .map((l) => {
+                    try {
+                        return resolverIface.parseLog({topics: l.topics as string[], data: l.data})
+                    } catch {
+                        return null
+                    }
+                })
+                .find((e) => e && e.name === 'SrcEscrowPlanned')
+
+            expect(srcPlanned).toBeTruthy()
+
+            if (srcPlanned) {
+                const canonicalPayload: string = srcPlanned.args.canonicalPayload
+                const coder = AbiCoder.defaultAbiCoder()
+                const [, , maker, , , amount, safetyDeposit, timelocks] = coder.decode(
+                    ['bytes32', 'bytes32', 'address', 'address', 'address', 'uint256', 'uint256', 'uint256'],
+                    canonicalPayload
+                )
+                expect(maker).toBe(await srcChainUser.getAddress())
+                expect(amount).toBe(order.makingAmount)
+                expect(safetyDeposit).toBe(order.escrowExtension.srcSafetyDeposit)
+                expect(typeof timelocks).toBe('bigint')
+            }
+
             const srcEscrowEvent = await srcFactory.getSrcDeployEvent(srcDeployBlock)
 
             const dstImmutables = srcEscrowEvent[0]
@@ -213,6 +248,37 @@ describe('Resolving example', () => {
                 resolverContract.deployDst(dstImmutables)
             )
             console.log(`[${dstChainId}]`, `Created dst deposit for order ${orderHash} in tx ${dstDepositHash}`)
+
+            // Assert DstEscrowCreated event and decode canonicalPayload
+
+            const dstReceipt = await dst.provider.getTransactionReceipt(dstDepositHash)
+
+            if (!dstReceipt) throw new Error('dst receipt not found')
+
+            const dstCreated = dstReceipt.logs
+                .map((l) => {
+                    try {
+                        return resolverIface.parseLog({topics: l.topics as string[], data: l.data})
+                    } catch {
+                        return null
+                    }
+                })
+                .find((e) => e && e.name === 'DstEscrowCreated')
+
+            expect(dstCreated).toBeTruthy()
+
+            if (dstCreated) {
+                const canonicalPayload: string = dstCreated.args.canonicalPayload
+                const coder = AbiCoder.defaultAbiCoder()
+                const [, , , taker2, , amount2, safetyDeposit2] = coder.decode(
+                    ['bytes32', 'bytes32', 'address', 'address', 'address', 'uint256', 'uint256', 'uint256'],
+                    canonicalPayload
+                )
+                // On dst, resolver pays out to user; taker should be resolver address on dst
+                expect(taker2.toLowerCase()).toBe(dst.resolver.toLowerCase())
+                expect(amount2).toBe(order.takingAmount)
+                expect(safetyDeposit2).toBe(order.escrowExtension.dstSafetyDeposit)
+            }
 
             const ESCROW_SRC_IMPLEMENTATION = await srcFactory.getSourceImpl()
             const ESCROW_DST_IMPLEMENTATION = await dstFactory.getDestinationImpl()
@@ -719,7 +785,7 @@ async function initChain(
 
     // deploy Resolver contract
     const resolver = await deploy(
-        resolverContract,
+        resolverArtifact,
         [
             escrowFactory,
             cnf.limitOrderProtocol,
@@ -743,8 +809,15 @@ async function getProvider(cnf: ChainConfig): Promise<{node?: CreateServerReturn
         }
     }
 
+    type AnvilOptions = {forkUrl: string; chainId: number; forkBlockNumber?: number}
+    const instanceOptions: AnvilOptions = {
+        forkUrl: cnf.url,
+        chainId: cnf.chainId,
+        ...(cnf.forkBlockNumber ? ({forkBlockNumber: cnf.forkBlockNumber} as AnvilOptions) : {})
+    }
+
     const node = createServer({
-        instance: anvil({forkUrl: cnf.url, chainId: cnf.chainId}),
+        instance: anvil(instanceOptions),
         limit: 1
     })
     await node.start()
@@ -767,12 +840,13 @@ async function getProvider(cnf: ChainConfig): Promise<{node?: CreateServerReturn
  * Deploy contract and return its address
  */
 async function deploy(
-    json: {abi: any; bytecode: any},
+    json: {abi: InterfaceAbi; bytecode: string | {object: string}},
     params: unknown[],
     provider: JsonRpcProvider,
     deployer: SignerWallet
 ): Promise<string> {
-    const deployed = await new ContractFactory(json.abi, json.bytecode, deployer).deploy(...params)
+    const bytecode = typeof json.bytecode === 'string' ? json.bytecode : json.bytecode.object
+    const deployed = await new ContractFactory(json.abi, bytecode, deployer).deploy(...params)
     await deployed.waitForDeployment()
 
     return await deployed.getAddress()

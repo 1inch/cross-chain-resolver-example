@@ -1,0 +1,13 @@
+{
+    "intent": {
+        "maker_near": "fusionswap.testnet",
+        "taker_near": "fusionswap.testnet",
+        "maker_asset_near": "wrap.testnet",
+        "taker_asset_evm": "0xdd13e55209fd76afe204dbda4007c227904f0a81",
+        "making_amount": "2000000000000000000",
+        "taking_amount": "2000000000000000000",
+        "order_hash_hex": "0x000000000000000000000000000000000000000000000000000000000000abcd",
+        "dst_chain_id": 11155111,
+        "timelocks_hex": "0x"
+    }
+}

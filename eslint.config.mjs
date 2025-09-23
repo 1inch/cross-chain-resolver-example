@@ -1,8 +1,14 @@
-import oneInchEslintConfig from "@1inch/eslint-config";
+import oneInchEslintConfig from '@1inch/eslint-config'
 
-export default [...oneInchEslintConfig, {
-    rules: {
-        "no-console": "off",
+export default [
+    {
+        ignores: ['contracts/lib/**', 'near/contracts/**/target/**', 'node_modules/**']
     },
-    files: ['tests/**/**']
-}];
+    ...oneInchEslintConfig,
+    {
+        rules: {
+            'no-console': 'off'
+        },
+        files: ['tests/**/**']
+    }
+]

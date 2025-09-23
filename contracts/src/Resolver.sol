@@ -39,6 +39,18 @@ contract Resolver is Ownable {
         _LOP = lop;
     }
 
+    /**
+     * @dev Canonical payload events for cross-chain agents (e.g., Shade Agent) to consume
+     * without changing resolver method signatures.
+     */
+    event SrcEscrowPlanned(IBaseEscrow.Immutables immutables, uint256 srcChainId, bytes canonicalPayload);
+    event DstEscrowCreated(
+        IBaseEscrow.Immutables immutables,
+        uint256 srcCancellationTimestamp,
+        uint256 dstChainId,
+        bytes canonicalPayload
+    );
+
     receive() external payable {} // solhint-disable-line no-empty-blocks
 
     /**
@@ -61,6 +73,10 @@ contract Resolver is Ownable {
         (bool success,) = address(computed).call{value: immutablesMem.safetyDeposit}("");
         if (!success) revert IBaseEscrow.NativeTokenSendingFailure();
 
+        // Emit canonical payload for off-chain agent consumption
+        bytes memory canonicalPayload = abi.encode(immutablesMem);
+        emit SrcEscrowPlanned(immutablesMem, block.chainid, canonicalPayload);
+
         // _ARGS_HAS_TARGET = 1 << 251
         takerTraits = TakerTraits.wrap(TakerTraits.unwrap(takerTraits) | uint256(1 << 251));
         bytes memory argsMem = abi.encodePacked(computed, args);
@@ -71,6 +87,10 @@ contract Resolver is Ownable {
      * @notice See {IResolverExample-deployDst}.
      */
     function deployDst(IBaseEscrow.Immutables calldata dstImmutables, uint256 srcCancellationTimestamp) external onlyOwner payable {
+        // Emit canonical payload for off-chain agent consumption
+        bytes memory canonicalPayload = abi.encode(dstImmutables);
+        emit DstEscrowCreated(dstImmutables, srcCancellationTimestamp, block.chainid, canonicalPayload);
+
         _FACTORY.createDstEscrow{value: msg.value}(dstImmutables, srcCancellationTimestamp);
     }
 

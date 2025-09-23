@@ -1,14 +1,19 @@
 {
-  "extends": "@1inch/tsconfig",
-  "compilerOptions": {
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "moduleDetection": "auto",
-    "outDir": "./dist",
-    "rootDir": "./s",
-    "lib": ["ESNext"],
-    "target": "ES2023",
-    "removeComments": false
-  },
-  "include": ["./src"]
+    "extends": "@1inch/tsconfig",
+    "compilerOptions": {
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "moduleDetection": "auto",
+        "outDir": "./dist",
+        "rootDir": ".",
+        "lib": ["ESNext"],
+        "target": "ES2023",
+        "removeComments": false,
+        "types": ["jest", "node"],
+        "skipLibCheck": true,
+        "resolveJsonModule": true,
+        "allowSyntheticDefaultImports": true
+    },
+    "include": ["./src", "./tests", "./scripts"],
+    "exclude": ["./dist"]
 }
