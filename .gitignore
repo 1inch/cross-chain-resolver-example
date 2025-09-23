@@ -132,3 +132,7 @@ dist
 
 cache
 .idea
+
+near/contracts/escrow/target
+near/contracts/intents/target
+
