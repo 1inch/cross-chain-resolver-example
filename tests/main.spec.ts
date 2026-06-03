@@ -1,8 +1,7 @@
 import 'dotenv/config'
 import {expect, jest} from '@jest/globals'
 
-import {createServer, CreateServerReturnType} from 'prool'
-import {anvil} from 'prool/instances'
+import {Instance, Server} from 'prool'
 
 import Sdk from '@1inch/cross-chain-sdk'
 import {
@@ -37,7 +36,7 @@ describe('Resolving example', () => {
     const dstChainId = config.chain.destination.chainId
 
     type Chain = {
-        node?: CreateServerReturnType | undefined
+        node?: Server.CreateServerReturnType | undefined
         provider: JsonRpcProvider
         escrowFactory: string
         resolver: string
@@ -697,7 +696,7 @@ describe('Resolving example', () => {
 
 async function initChain(
     cnf: ChainConfig
-): Promise<{node?: CreateServerReturnType; provider: JsonRpcProvider; escrowFactory: string; resolver: string}> {
+): Promise<{node?: Server.CreateServerReturnType; provider: JsonRpcProvider; escrowFactory: string; resolver: string}> {
     const {node, provider} = await getProvider(cnf)
     const deployer = new SignerWallet(cnf.ownerPrivateKey, provider)
 
@@ -733,7 +732,9 @@ async function initChain(
     return {node: node, provider, resolver, escrowFactory}
 }
 
-async function getProvider(cnf: ChainConfig): Promise<{node?: CreateServerReturnType; provider: JsonRpcProvider}> {
+async function getProvider(
+    cnf: ChainConfig
+): Promise<{node?: Server.CreateServerReturnType; provider: JsonRpcProvider}> {
     if (!cnf.createFork) {
         return {
             provider: new JsonRpcProvider(cnf.url, cnf.chainId, {
@@ -743,8 +744,8 @@ async function getProvider(cnf: ChainConfig): Promise<{node?: CreateServerReturn
         }
     }
 
-    const node = createServer({
-        instance: anvil({forkUrl: cnf.url, chainId: cnf.chainId}),
+    const node = Server.create({
+        instance: Instance.anvil({forkUrl: cnf.url, chainId: cnf.chainId}),
         limit: 1
     })
     await node.start()
