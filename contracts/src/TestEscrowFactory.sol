@@ -9,5 +9,5 @@ contract TestEscrowFactory is EscrowFactory {
         IERC20 accessToken,
         address owner, uint32 rescueDelaySrc,
         uint32 rescueDelayDst
-    ) EscrowFactory(limitOrderProtocol, feeToken, accessToken, owner, rescueDelayDst, rescueDelayDst) {}
+    ) EscrowFactory(limitOrderProtocol, feeToken, accessToken, owner, rescueDelaySrc, rescueDelayDst) {}
 }
