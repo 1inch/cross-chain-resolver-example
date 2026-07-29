@@ -8,10 +8,10 @@
   },
   "devDependencies": {
     "@1inch/eslint-config": "^v3.0.7",
+    "@1inch/tsconfig": "1.0.7",
     "@eslint/compat": "1.1.0",
     "@eslint/eslintrc": "^3.1.0",
     "@eslint/js": "^9.10.0",
-    "@1inch/tsconfig": "1.0.7",
     "@jest/globals": "29.7.0",
     "@swc/core": "1.5.25",
     "@swc/jest": "0.2.36",
@@ -45,13 +45,6 @@
     "@1inch/cross-chain-sdk": "v0.1.15-rc.0",
     "dotenv": "16.4.5",
     "ethers": "6.13.2",
-    "prool": "0.0.24"
-  },
-  "packageManager": "pnpm@9.0.0+sha512.b4106707c7225b1748b61595953ccbebff97b54ad05d002aa3635f633b9c53cd666f7ce9b8bc44704f1fa048b9a49b55371ab2d9e9d667d1efe2ef1514bcd513",
-  "pnpm": {
-    "overrides": {
-      "tar@<=7.5.18": ">=7.5.19 <8.0.0",
-      "axios@<1.18.0": ">=1.18.0 <2.0.0"
-    }
+    "prool": "0.2.4"
   }
 }
