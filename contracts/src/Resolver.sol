@@ -4,15 +4,15 @@ pragma solidity 0.8.23;
 
 import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 
-import {IOrderMixin} from "limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
-import {TakerTraits} from "limit-order-protocol/contracts/libraries/TakerTraitsLib.sol";
+import {IOrderMixin} from "../lib/cross-chain-swap/lib/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
+import {TakerTraits} from "../lib/cross-chain-swap/lib/limit-order-protocol/contracts/libraries/TakerTraitsLib.sol";
 
 import {IResolverExample} from "../lib/cross-chain-swap/contracts/interfaces/IResolverExample.sol";
 import {RevertReasonForwarder} from "../lib/cross-chain-swap/lib/solidity-utils/contracts/libraries/RevertReasonForwarder.sol";
 import {IEscrowFactory} from "../lib/cross-chain-swap/contracts/interfaces/IEscrowFactory.sol";
 import {IBaseEscrow} from "../lib/cross-chain-swap/contracts/interfaces/IBaseEscrow.sol";
 import {TimelocksLib, Timelocks} from "../lib/cross-chain-swap/contracts/libraries/TimelocksLib.sol";
-import {Address} from "solidity-utils/contracts/libraries/AddressLib.sol";
+import {Address} from "../lib/cross-chain-swap/lib/solidity-utils/contracts/libraries/AddressLib.sol";
 import {IEscrow} from "../lib/cross-chain-swap/contracts/interfaces/IEscrow.sol";
 import {ImmutablesLib} from "../lib/cross-chain-swap/contracts/libraries/ImmutablesLib.sol";
 
