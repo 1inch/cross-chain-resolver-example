@@ -10,8 +10,8 @@ const bool = z
 const ConfigSchema = z.object({
     SRC_CHAIN_RPC: z.string().url(),
     DST_CHAIN_RPC: z.string().url(),
-    SRC_CHAIN_CREATE_FORK: bool.default('true'),
-    DST_CHAIN_CREATE_FORK: bool.default('true')
+    SRC_CHAIN_CREATE_FORK: bool.default(true),
+    DST_CHAIN_CREATE_FORK: bool.default(true)
 })
 
 const fromEnv = ConfigSchema.parse(process.env)
